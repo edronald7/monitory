@@ -104,8 +104,12 @@ def cpu_panel(snapshot, panel_width=40):
 PROCESS_GROUPS = ("System", "Docker", "Py+JVM")
 
 
-def classify_process(name, user):
-    n = name.lower()
+def classify_process(proc):
+    # A process running inside a Docker container keeps its own name (postgres,
+    # node, java, ...), so the cgroup is what actually tells us it is Docker.
+    if proc.get("docker"):
+        return "Docker"
+    n = proc["name"].lower()
     if "docker" in n or "containerd" in n or n in ("runc", "dockerd"):
         return "Docker"
     if "python" in n or "java" in n:
@@ -117,7 +121,7 @@ def _process_groups_table(snapshot, panel_width):
     totals = {g: 0.0 for g in PROCESS_GROUPS}
     counts = {g: 0 for g in PROCESS_GROUPS}
     for p in snapshot["processes"]:
-        group = classify_process(p["name"], p["user"])
+        group = classify_process(p)
         totals[group] += p["mem"]
         counts[group] += 1
 

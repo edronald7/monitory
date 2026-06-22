@@ -50,6 +50,21 @@ def friendly_temp_name(chip, label):
     return (label or chip).strip()
 
 
+def process_in_docker(pid):
+    """True if the process belongs to a Docker cgroup.
+
+    Container processes keep their own name (postgres, node, java, ...), so the
+    only reliable signal that they are running under Docker is their cgroup:
+    `/docker/<id>` (cgroup v1) or `docker-<id>.scope` (cgroup v2), plus the
+    daemon's `docker.service` slice.
+    """
+    try:
+        with open(f"/proc/{pid}/cgroup", "r") as f:
+            return "docker" in f.read()
+    except (OSError, ValueError):
+        return False
+
+
 class MetricsCollector:
     def __init__(self):
         self.hostname = socket.gethostname()
@@ -182,6 +197,7 @@ class MetricsCollector:
                     "name": info["name"] or "?",
                     "user": info["username"] or "?",
                     "mem": mem,
+                    "docker": process_in_docker(info["pid"]),
                 })
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
