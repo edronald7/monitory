@@ -117,28 +117,45 @@ class MetricsCollector:
         }
 
     def _collect_disks(self):
-        disks = []
-        seen_mounts = set()
+        # A single physical partition can be mounted at several paths (btrfs
+        # subvolumes, bind mounts, ...). The classic case is Fedora's layout
+        # where `/` and `/home` are both subvolumes of the same device and would
+        # otherwise show up as two disks with identical capacity. We deduplicate
+        # by device so each real partition is reported once, preferring `/` and
+        # then the shortest mountpoint as the representative path.
+        by_device = {}
         for part in psutil.disk_partitions(all=False):
             if part.fstype in _IGNORED_FS_TYPES:
                 continue
             if part.mountpoint == "/boot" or part.mountpoint.startswith("/boot/"):
                 continue
-            if part.mountpoint in seen_mounts:
-                continue
             try:
                 usage = psutil.disk_usage(part.mountpoint)
             except (PermissionError, OSError):
                 continue
-            seen_mounts.add(part.mountpoint)
-            disks.append({
-                "mountpoint": part.mountpoint,
-                "total": usage.total,
-                "used": usage.used,
-                "percent": usage.percent,
-            })
+            # Devices without a real backing node (empty string) can still
+            # collide, so fall back to the mountpoint as the dedup key.
+            key = part.device or part.mountpoint
+            existing = by_device.get(key)
+            if existing is None or self._prefer_mount(part.mountpoint, existing["mountpoint"]):
+                by_device[key] = {
+                    "mountpoint": part.mountpoint,
+                    "total": usage.total,
+                    "used": usage.used,
+                    "percent": usage.percent,
+                }
+        disks = list(by_device.values())
         disks.sort(key=lambda d: d["mountpoint"])
         return disks
+
+    @staticmethod
+    def _prefer_mount(candidate, current):
+        """True if `candidate` is a better representative mount than `current`."""
+        if candidate == "/":
+            return True
+        if current == "/":
+            return False
+        return len(candidate) < len(current)
 
     def _collect_network(self, elapsed):
         current = psutil.net_io_counters(pernic=True)
